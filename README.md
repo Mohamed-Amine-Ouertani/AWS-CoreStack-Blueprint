@@ -30,8 +30,8 @@ This project is **Layer 1 of a four-project Platform Engineering portfolio**. Th
                          │  │            VPC               │   │
                          │  │   10.0.0.0/16                │   │
           Internet ──────┼──┤                              │   │
-                         │  │  ┌─── AZ-1a ──┐ ┌─AZ-1b─┐    │   │
-                         │  │  │ Public 10.0│ │ Public│    │   │
+                         │  │  ┌─── AZ-1a ──┐ ┌─AZ-1b ─┐   │   │
+                         │  │  │ Public 10.0│ │ Public │   │   │
                          │  │  │  .1.0/24   │ │ .2.0/24│   │   │
                          │  │  │  [ALB]     │ │ [ALB]  │   │   │
                          │  │  │            │ │        │   │   │
