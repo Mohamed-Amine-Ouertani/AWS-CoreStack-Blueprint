@@ -73,7 +73,7 @@ Three AZs provides better fault tolerance (N-1 capacity at 67% vs 50%) and is th
 
 ### Why EKS over ECS Fargate?
 
-ECS Fargate is operationally simpler — no node management, no cluster upgrades, no kubectl. For a portfolio targeting **Platform Engineering roles**, EKS is the deliberate choice: it demonstrates Kubernetes API familiarity, Helm chart management, node group configuration, and IRSA (IAM Roles for Service Accounts). These are required skills in every Platform Engineer JD reviewed. ECS competence is implied; EKS competence must be demonstrated.
+While ECS is the "easy button" for container orchestration on AWS, Amazon EKS is chosen over ECS Fargate when the requirement is to build a highly extensible, standardized, and vendor-agnostic platform rather than just consuming a container service.
 
 ### Why LGTM (Loki + Grafana + Tempo + Mimir) over the ELK stack?
 
