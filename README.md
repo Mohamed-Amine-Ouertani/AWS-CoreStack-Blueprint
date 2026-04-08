@@ -89,7 +89,7 @@ Loki's label-based indexing means logs cost significantly less to store and quer
 
 ### Why GitHub Actions over Jenkins?
 
-Jenkins is what most Tunisian engineering programs teach. GitHub Actions is what German tech companies are migrating to. The CI/CD layer in this project uses GitHub Actions to demonstrate familiarity with the modern default. A Jenkins pipeline for the same workflow is documented in [`docs/runbooks/jenkins-equivalent.md`](docs/runbooks/jenkins-equivalent.md) to show the translation.
+Jenkins is what most engineering programs teach. GitHub Actions is what German tech companies are migrating to. The CI/CD layer in this project uses GitHub Actions to demonstrate familiarity with the modern default. A Jenkins pipeline for the same workflow is documented in [`docs/runbooks/jenkins-equivalent.md`](docs/runbooks/jenkins-equivalent.md) to show the translation.
 
 ---
 
