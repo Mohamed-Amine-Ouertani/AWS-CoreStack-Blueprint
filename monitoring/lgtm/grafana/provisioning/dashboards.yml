@@ -1,0 +1,26 @@
+################################################################################
+# Grafana Dashboard Provisioning
+#
+# Watches the /var/lib/grafana/dashboards directory and automatically loads
+# any JSON files found there. Matches the sidecar configuration used in
+# production (modules/monitoring/main.tf) so dashboards are identical.
+#
+# Dashboard JSON files live in: monitoring/lgtm/grafana/dashboards/
+# To add a dashboard: drop a JSON file there and restart Grafana.
+################################################################################
+
+apiVersion: 1
+
+providers:
+
+  - name: CoreStack Dashboards
+    orgId: 1
+    type: file
+    disableDeletion: false     # Allow deletion via UI (useful in local dev)
+    editable: true             # Allow edits via UI (mirrors dev workflow)
+    updateIntervalSeconds: 30  # Poll for new/changed JSON files every 30s
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
+      # Preserve folder structure: subfolders → Grafana folders
+      foldersFromFilesStructure: true

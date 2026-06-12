@@ -1,0 +1,218 @@
+################################################################################
+# terraform-apply.yml
+# Triggered on merge to main for Terraform file changes.
+#
+# Steps:
+#   1. Re-run terraform plan (fresh plan, not from artifact — state may have
+#      changed between PR open and merge)
+#   2. Manual approval gate via GitHub Environments
+#   3. terraform apply with the fresh plan
+#   4. Slack notification on success or failure
+#
+# Approval gates:
+#   dev  — 1 required reviewer  (GitHub Environment: "dev")
+#   prod — 2 required reviewers (GitHub Environment: "prod")
+#
+# Setup required in GitHub repository settings:
+#   Settings → Environments → Create "dev" and "prod"
+#   Add required reviewers to each environment
+################################################################################
+
+name: "Terraform Apply"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/terraform-apply.yml"
+
+permissions:
+  contents: read
+  id-token: write   # OIDC auth to AWS
+
+env:
+  TF_VERSION: "1.7.5"
+  AWS_REGION: "eu-central-1"
+
+jobs:
+  plan:
+    name: "Plan (${{ matrix.env }})"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [dev]   # Add prod once the prod environment is built
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.env }}
+
+    outputs:
+      # Pass plan exit code to apply job so it knows whether changes exist
+      plan_exit_code: ${{ steps.plan.outputs.exitcode }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: "github-actions-plan-${{ matrix.env }}"
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=corestack/${{ matrix.env }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}"
+
+      - name: Terraform plan
+        id: plan
+        run: |
+          terraform plan \
+            -input=false \
+            -out=tfplan \
+            -detailed-exitcode \
+            -var="grafana_admin_password=${{ secrets.GRAFANA_ADMIN_PASSWORD }}" \
+            -var="oidc_provider_url=${{ secrets.OIDC_PROVIDER_URL }}" \
+            -var="domain_name=${{ secrets.DOMAIN_NAME }}" \
+            -var="github_org=${{ github.repository_owner }}" \
+            -var="alarm_email=${{ secrets.ALARM_EMAIL }}"
+        # Exit codes: 0 = no changes, 1 = error, 2 = changes present
+        continue-on-error: true
+
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.env }}-${{ github.sha }}
+          path: terraform/environments/${{ matrix.env }}/tfplan
+          retention-days: 1   # Only needed for the apply job minutes later
+
+      - name: Fail on plan error
+        if: steps.plan.outputs.exitcode == '1'
+        run: exit 1
+
+  # ── Manual approval gate ──────────────────────────────────────────────────────
+  approve:
+    name: "Approve (${{ matrix.env }})"
+    runs-on: ubuntu-latest
+    needs: plan
+
+    strategy:
+      matrix:
+        env: [dev]
+
+    # The environment name must match the GitHub Environment configured in
+    # Settings → Environments. Reviewers configured there must approve before
+    # the apply job proceeds.
+    environment: ${{ matrix.env }}
+
+    steps:
+      - name: Approval granted
+        run: echo "Approved for ${{ matrix.env }} — proceeding to apply"
+
+  # ── Apply ─────────────────────────────────────────────────────────────────────
+  apply:
+    name: "Apply (${{ matrix.env }})"
+    runs-on: ubuntu-latest
+    needs: approve
+
+    strategy:
+      # Never run dev and prod applies in parallel — sequential only
+      max-parallel: 1
+      matrix:
+        env: [dev]
+
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.env }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      # Apply uses a role with write permissions — separate from the plan role
+      # which is read-only. Least privilege: plan role can only read state and
+      # describe resources; apply role can create/modify/delete.
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: "github-actions-apply-${{ matrix.env }}"
+
+      - name: Terraform init
+        run: |
+          terraform init \
+            -input=false \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=corestack/${{ matrix.env }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ secrets.TF_LOCK_TABLE }}"
+
+      # Download the plan produced in the plan job — use the same plan, not a new one
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.env }}-${{ github.sha }}
+          path: terraform/environments/${{ matrix.env }}
+
+      - name: Terraform apply
+        id: apply
+        run: |
+          terraform apply \
+            -input=false \
+            -auto-approve \
+            tfplan
+
+      # ── Slack notification ──────────────────────────────────────────────────
+      - name: Notify success
+        if: success()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "✅ Terraform apply succeeded",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "✅ *Terraform apply succeeded*\n*Environment:* `${{ matrix.env }}`\n*Triggered by:* ${{ github.actor }}\n*Commit:* <${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}|${{ github.sha }}>"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "text": "❌ Terraform apply failed",
+              "blocks": [{
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "❌ *Terraform apply FAILED*\n*Environment:* `${{ matrix.env }}`\n*Triggered by:* ${{ github.actor }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View logs>"
+                }
+              }]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

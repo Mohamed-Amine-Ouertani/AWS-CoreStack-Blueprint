@@ -1,0 +1,102 @@
+################################################################################
+# Grafana Data Source Provisioning
+#
+# Wires all four LGTM data sources at container startup.
+# Mirrors the additionalDataSources block in modules/monitoring/main.tf so
+# Grafana behaves identically in local dev and production.
+#
+# No manual configuration required — open Grafana at http://localhost:3000
+# and all four sources are already connected.
+################################################################################
+
+apiVersion: 1
+
+datasources:
+
+  # ── Prometheus (via Mimir) ─────────────────────────────────────────────────
+  # Mimir exposes a Prometheus-compatible query API.
+  # This is the default metrics datasource — used by all pre-built dashboards.
+  - name: Mimir
+    type: prometheus
+    uid: mimir
+    url: http://mimir:9009/prometheus
+    access: proxy
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      timeInterval: "15s"
+      # Mimir-specific: enables Mimir cardinality explorer in Grafana
+      customQueryParameters: "X-Scope-OrgID=anonymous"
+
+  # ── Loki ──────────────────────────────────────────────────────────────────
+  - name: Loki
+    type: loki
+    uid: loki
+    url: http://loki:3100
+    access: proxy
+    isDefault: false
+    editable: false
+    jsonData:
+      maxLines: 1000
+      # Derived fields: extract trace IDs from log lines and link to Tempo
+      # Matches the traceId pattern used by OpenTelemetry log instrumentation
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: "traceID=(\\w+)"
+          name: TraceID
+          url: "$${__value.raw}"
+          urlDisplayLabel: "View trace in Tempo"
+
+  # ── Tempo ─────────────────────────────────────────────────────────────────
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    url: http://tempo:3200
+    access: proxy
+    isDefault: false
+    editable: false
+    jsonData:
+      # Trace → Logs correlation: clicking a span opens the correlated Loki query
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-1h"
+        spanEndTimeShift:   "1h"
+        filterByTraceID:    true
+        filterBySpanID:     false
+        customQuery:        false
+      # Trace → Metrics correlation: links spans to Mimir service metrics
+      tracesToMetrics:
+        datasourceUid: mimir
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift:   "5m"
+        tags:
+          - key: service.name
+            value: service
+        queries:
+          - name: "Request rate"
+            query: "rate(traces_spanmetrics_calls_total{$$__tags}[5m])"
+          - name: "Error rate"
+            query: "rate(traces_spanmetrics_calls_total{$$__tags,status_code=\"STATUS_CODE_ERROR\"}[5m])"
+      # Service graph — shows inter-service dependencies from trace data
+      serviceMap:
+        datasourceUid: mimir
+      # Node graph — visualises service topology
+      nodeGraph:
+        enabled: true
+      # TraceQL search
+      search:
+        hide: false
+      lokiSearch:
+        datasourceUid: loki
+
+  # ── AlertManager ──────────────────────────────────────────────────────────
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    url: http://prometheus:9093
+    access: proxy
+    isDefault: false
+    editable: false
+    jsonData:
+      implementation: prometheus

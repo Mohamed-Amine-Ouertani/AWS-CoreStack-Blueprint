@@ -1,0 +1,91 @@
+// ────────────────────────────────────────────────────────────────────────────
+// Grafana Alloy — local development configuration
+//
+// Mirrors the production Alloy config in modules/monitoring/main.tf.
+// Differences from production:
+//   - Collects Docker container logs (not K8s pod logs)
+//   - Targets local Loki and Tempo endpoints (not in-cluster service DNS)
+//
+// Alloy UI: http://localhost:12345
+// ────────────────────────────────────────────────────────────────────────────
+
+// ── Docker container log discovery ──────────────────────────────────────────
+// Discovers all running Docker containers and tails their logs.
+// Equivalent to the Kubernetes pod log discovery in production.
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+
+  filter {
+    name   = "status"
+    values = ["running"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Extract container name (strip leading /)
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Extract image name
+  rule {
+    source_labels = ["__meta_docker_container_image_name"]
+    target_label  = "image"
+  }
+
+  // Map compose service label → service label (matches K8s app label in prod)
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  // Add environment label — useful for multi-env Grafana deployments
+  rule {
+    target_label = "environment"
+    replacement  = "local-dev"
+  }
+}
+
+// ── Log ingestion → Loki ────────────────────────────────────────────────────
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.local.receiver]
+  labels     = { "job" = "docker" }
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ── OTLP trace receiver → Tempo ─────────────────────────────────────────────
+// Receives OTLP traces from instrumented applications and forwards to Tempo.
+// Same receiver config as production — no code changes needed between envs.
+
+otelcol.receiver.otlp "default" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces = [otelcol.exporter.otlp.tempo.input]
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

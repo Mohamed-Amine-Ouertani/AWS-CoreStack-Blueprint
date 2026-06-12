@@ -1,0 +1,87 @@
+################################################################################
+# Tempo — local development configuration
+#
+# Filesystem storage. Accepts traces via OTLP (gRPC + HTTP), Jaeger, and Zipkin.
+# Mirrors the production receiver configuration so application instrumentation
+# works identically in local and production environments.
+#
+# Send traces to:
+#   OTLP gRPC : localhost:4317
+#   OTLP HTTP : localhost:4318
+#   Zipkin    : localhost:9411
+#   Jaeger    : localhost:14268
+################################################################################
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+# Trace receivers — match production config in modules/monitoring/main.tf
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: "0.0.0.0:4317"
+        http:
+          endpoint: "0.0.0.0:4318"
+    jaeger:
+      protocols:
+        thrift_http:
+          endpoint: "0.0.0.0:14268"
+        grpc:
+          endpoint: "0.0.0.0:14250"
+    zipkin:
+      endpoint: "0.0.0.0:9411"
+
+ingester:
+  max_block_duration: 5m    # Short for local dev — flush to storage quickly
+  trace_idle_period: 10s
+  lifecycler:
+    address: 127.0.0.1
+    ring:
+      kvstore:
+        store: inmemory
+      replication_factor: 1
+    final_sleep: 0s
+
+compactor:
+  compaction:
+    block_retention: 720h   # 30 days — matches tempo_retention_hours in Terraform
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/tempo/blocks
+    wal:
+      path: /var/tempo/wal
+    pool:
+      max_workers: 100
+      queue_depth: 10000
+
+querier:
+  frontend_worker:
+    frontend_address: 127.0.0.1:9095
+
+query_frontend:
+  search:
+    duration_slo: 5s
+    throughput_bytes_slo: 1.073741824e+09
+  trace_by_id:
+    duration_slo: 5s
+
+# Enables TraceQL — required for Grafana's trace exploration UI
+# Must match production: modules/monitoring/main.tf grafana_ini.feature_toggles
+metrics_generator:
+  registry:
+    external_labels:
+      source: tempo
+      cluster: local-dev
+  storage:
+    path: /var/tempo/generator/wal
+    remote_write:
+      - url: http://mimir:9009/api/v1/push
+        send_exemplars: true

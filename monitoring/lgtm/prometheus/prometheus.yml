@@ -1,0 +1,82 @@
+################################################################################
+# Prometheus — local development configuration
+#
+# Scrapes all LGTM stack components running in Docker Compose and
+# remote-writes metrics to Mimir for long-term storage.
+#
+# Mirrors the production prometheusSpec in modules/monitoring/main.tf:
+#   - Short local retention (1h) — Mimir is the durable copy
+#   - Remote write to Mimir at /api/v1/push
+#   - All scrape targets use job labels matching production ServiceMonitors
+################################################################################
+
+global:
+  scrape_interval:     15s   # How often Prometheus scrapes each target
+  evaluation_interval: 15s   # How often rules are evaluated
+  scrape_timeout:      10s
+
+  external_labels:
+    cluster:     local-dev
+    environment: dev
+
+# ── Remote write → Mimir ─────────────────────────────────────────────────────
+# All scraped metrics are remote-written to Mimir. This is the same pattern
+# used in production — Prometheus is a scrape engine, Mimir is the store.
+remote_write:
+  - url: http://mimir:9009/api/v1/push
+    queue_config:
+      max_samples_per_send: 10000
+      max_shards:           200
+      capacity:             2500
+    write_relabel_configs:
+      # Drop high-cardinality debug metrics to keep local Mimir lean
+      - source_labels: [__name__]
+        regex: "go_gc_.*|go_memstats_.*"
+        action: drop
+
+# ── Scrape configs ───────────────────────────────────────────────────────────
+scrape_configs:
+
+  # Prometheus self-monitoring
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          service: prometheus
+
+  # Grafana
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          service: grafana
+
+  # Loki — exposes its own metrics at /metrics
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+        labels:
+          service: loki
+
+  # Mimir — exposes metrics for self-monitoring
+  - job_name: mimir
+    static_configs:
+      - targets: ["mimir:9009"]
+        labels:
+          service: mimir
+    # Mimir metrics path differs from the default
+    metrics_path: /metrics
+
+  # Tempo
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+        labels:
+          service: tempo
+
+  # Alloy
+  - job_name: alloy
+    static_configs:
+      - targets: ["alloy:12345"]
+        labels:
+          service: alloy

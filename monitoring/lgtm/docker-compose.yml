@@ -1,0 +1,195 @@
+################################################################################
+# Local LGTM Stack — Docker Compose
+#
+# Runs the full observability stack locally without needing EKS or AWS.
+# Mirrors the production topology deployed by the Terraform monitoring module.
+#
+# Usage:
+#   cd monitoring/lgtm
+#   docker compose up -d
+#   open http://localhost:3000   # Grafana (admin / admin)
+#
+# All four signals are wired:
+#   Metrics  → Mimir  (http://localhost:9009)
+#   Logs     → Loki   (http://localhost:3100)
+#   Traces   → Tempo  (http://localhost:3200)
+#   Dashboards → Grafana (http://localhost:3000)
+#
+# Alloy collects Docker container logs and ships them to Loki.
+# Send OTLP traces to Alloy at localhost:4317 (gRPC) or localhost:4318 (HTTP).
+#
+# Data is persisted in named Docker volumes so state survives restarts.
+# Run `docker compose down -v` to wipe all data.
+################################################################################
+
+version: "3.9"
+
+networks:
+  lgtm:
+    driver: bridge
+
+volumes:
+  grafana-data:
+  loki-data:
+  mimir-data:
+  tempo-data:
+
+services:
+
+  ##############################################################################
+  # Grafana — dashboards and data source hub
+  ##############################################################################
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      # Grafana.ini — match production settings
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SECURITY_COOKIE_SECURE=false          # HTTP in local dev
+      - GF_ALERTING_ENABLED=true
+      - GF_UNIFIED_ALERTING_ENABLED=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - lgtm
+    depends_on:
+      - loki
+      - mimir
+      - tempo
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  ##############################################################################
+  # Loki — log aggregation
+  ##############################################################################
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yml
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - lgtm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ##############################################################################
+  # Mimir — long-term metrics storage (Prometheus-compatible)
+  ##############################################################################
+  mimir:
+    image: grafana/mimir:2.12.0
+    container_name: mimir
+    restart: unless-stopped
+    ports:
+      - "9009:9009"
+    command:
+      - -config.file=/etc/mimir/mimir-config.yml
+      - -target=all                    # Single-binary mode (same as Terraform deploy)
+    volumes:
+      - ./mimir/mimir-config.yml:/etc/mimir/mimir-config.yml:ro
+      - mimir-data:/data/mimir
+    networks:
+      - lgtm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9009/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  ##############################################################################
+  # Tempo — distributed tracing
+  ##############################################################################
+  tempo:
+    image: grafana/tempo:2.4.2
+    container_name: tempo
+    restart: unless-stopped
+    ports:
+      - "3200:3200"    # Tempo HTTP API
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+      - "9411:9411"    # Zipkin
+      - "14268:14268"  # Jaeger HTTP
+    command: -config.file=/etc/tempo/tempo-config.yml
+    volumes:
+      - ./tempo/tempo-config.yml:/etc/tempo/tempo-config.yml:ro
+      - tempo-data:/var/tempo
+    networks:
+      - lgtm
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ##############################################################################
+  # Prometheus — metrics scraper, remote-writes to Mimir
+  # Mirrors the production setup: local retention is short (1h),
+  # Mimir holds the durable long-term copy.
+  ##############################################################################
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1h      # Short — Mimir is the source of truth
+      - --web.enable-remote-write-receiver     # Accept remote-write from other sources
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - lgtm
+    depends_on:
+      - mimir
+
+  ##############################################################################
+  # Grafana Alloy — log collection + trace forwarding
+  # Collects Docker container logs and ships to Loki.
+  # Receives OTLP traces and forwards to Tempo.
+  # Mirrors the production Alloy DaemonSet configuration.
+  ##############################################################################
+  alloy:
+    image: grafana/alloy:v1.1.0
+    container_name: alloy
+    restart: unless-stopped
+    ports:
+      - "12345:12345"   # Alloy UI (http://localhost:12345)
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - lgtm
+    depends_on:
+      - loki
+      - tempo
+    # Requires host-level access to Docker socket for log collection
+    user: root

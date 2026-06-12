@@ -1,0 +1,68 @@
+################################################################################
+# Loki — local development configuration
+#
+# Uses filesystem storage instead of S3. Schema and indexing config mirrors
+# production so dashboards and LogQL queries work identically in both.
+#
+# Data is stored in /loki (mapped to the loki-data Docker volume).
+################################################################################
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# Schema — must match production (v13 + tsdb) so LogQL queries are portable
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+# Retention — shorter than production for local dev
+limits_config:
+  retention_period: 168h    # 7 days — enough for local development sessions
+  ingestion_rate_mb: 32
+  ingestion_burst_size_mb: 64
+  per_stream_rate_limit: 10MB
+  per_stream_rate_limit_burst: 20MB
+  # Allow out-of-order log ingestion — useful for local dev where containers
+  # may restart and replay logs with earlier timestamps
+  unordered_writes: true
+
+ruler:
+  alertmanager_url: http://localhost:9093
+
+# Compactor handles retention enforcement
+compactor:
+  working_directory: /loki/retention
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  delete_request_store: filesystem
+
+# Query range settings
+query_range:
+  results_cache:
+    cache:
+      embedded_cache:
+        enabled: true
+        max_size_mb: 100

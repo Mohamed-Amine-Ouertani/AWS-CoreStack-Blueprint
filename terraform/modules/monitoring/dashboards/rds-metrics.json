@@ -1,21 +1,22 @@
 {
   "__inputs": [],
   "__requires": [
-    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "11.0.0" }
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" }
   ],
   "annotations": { "list": [] },
   "editable": true,
+  "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
   "links": [],
   "panels": [
     {
-      "datasource": { "type": "prometheus", "uid": "mimir" },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
       "id": 1,
       "options": {
-        "content": "## Eks Cluster\n\nReplace with community dashboard JSON from grafana.com.\nSee `terraform/modules/monitoring/dashboards/README.md` for sourcing instructions.",
+        "content": "## Rds Metrics\n\nReplace this panel with the community dashboard JSON.\nSee `dashboards/README.md` for sourcing instructions.",
         "mode": "markdown"
       },
       "type": "text"
@@ -42,7 +43,7 @@
   "time": { "from": "now-3h", "to": "now" },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Eks Cluster",
-  "uid": "corestack-eks-cluster",
+  "title": "Rds Metrics",
+  "uid": "corestack-rds-metrics",
   "version": 1
 }
