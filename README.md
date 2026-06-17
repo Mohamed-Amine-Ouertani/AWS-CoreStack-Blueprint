@@ -22,33 +22,7 @@ This project is **Layer 1 of a four-project Platform Engineering portfolio**. Th
 
 ## Architecture Overview
 
-```
-                         ┌─────────────────────────────────────┐
-                         │          AWS Region (eu-central-1)  │
-                         │                                     │
-                         │  ┌──────────────────────────────┐   │
-                         │  │            VPC               │   │
-                         │  │   10.0.0.0/16                │   │
-          Internet ──────┼──┤                              │   │
-                         │  │  ┌─── AZ-1a ──┐ ┌─AZ-1b ─┐   │   │
-                         │  │  │ Public 10.0│ │ Public │   │   │
-                         │  │  │  .1.0/24   │ │ .2.0/24│   │   │
-                         │  │  │  [ALB]     │ │ [ALB]  │   │   │
-                         │  │  │            │ │        │   │   │
-                         │  │  │ Priv 10.0  │ │ Priv   │   │   │
-                         │  │  │  .11.0/24  │ │ .12.0  │   │   │
-                         │  │  │ [EKS Nodes]│ │[EKS]   │   │   │
-                         │  │  │            │ │        │   │   │
-                         │  │  │ DB 10.0    │ │ DB     │   │   │
-                         │  │  │  .21.0/24  │ │.22.0   │   │   │
-                         │  │  │  [RDS]     │ │[RDS SB]│   │   │
-                         │  │  └────────────┘ └────────┘   │   │
-                         │  └──────────────────────────────┘   │
-                         │                                     │
-                         │  [S3 State Backend] [IAM Roles]     │
-                         │  [SSM Parameter Store] [CloudWatch] │
-                         └─────────────────────────────────────┘
-```
+![Cloud Architecture Diagram](https://github.com/Mohamed-Amine-Ouertani/AWS-CoreStack-Blueprint/AWS-CoreStack-Blueprint.png)
 
 **Three-tier network layout per AZ:**
 - **Public subnets** — ALB, NAT Gateways only. No application workloads.
