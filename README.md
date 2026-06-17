@@ -22,7 +22,7 @@ This project is **Layer 1 of a four-project Platform Engineering portfolio**. Th
 
 ## Architecture Overview
 
-![Cloud Architecture Diagram](https://github.com/Mohamed-Amine-Ouertani/AWS-CoreStack-Blueprint/AWS-CoreStack-Blueprint.png)
+![Cloud Architecture Diagram](https://github.com/Mohamed-Amine-Ouertani/AWS-CoreStack-Blueprint/blob/main/AWS-CoreStack-Blueprint.png)
 
 **Three-tier network layout per AZ:**
 - **Public subnets** — ALB, NAT Gateways only. No application workloads.
